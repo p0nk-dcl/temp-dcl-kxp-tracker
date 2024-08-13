@@ -64,8 +64,9 @@ contract MainRegistry {
 	);
 	event UserNameUpdated(address indexed userAddress, string newUserName);
 
-	constructor() {
-		owner = msg.sender;
+	constructor(address _owner) {
+		owner = _owner;
+		addAuthorizedAddress(owner); //Mainly for testing purpose
 	}
 
 	function _registerUser(
