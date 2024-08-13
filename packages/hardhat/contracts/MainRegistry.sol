@@ -39,8 +39,19 @@ contract MainRegistry {
 		uint256[] attestationIds;
 	}
 
+	address public owner;
+	mapping(address => bool) public authorizedAddresses; //To add attestations
 	mapping(address => UserProfile) public users; // wAddr -> UserProfile struct
 	mapping(uint256 => address) public attestationAddresses; // attestationId -> SmartContract of Attestation
+
+	modifier onlyOwner() {
+		require(msg.sender == owner, "Only the owner can perform this action");
+		_;
+	}
+	modifier onlyAuthorized() {
+		require(authorizedAddresses[msg.sender], "Not authorized");
+		_;
+	}
 
 	event UserRegistered(address indexed userAddress, string userName);
 	event AttestationCreated(
@@ -52,6 +63,10 @@ contract MainRegistry {
 		uint256 attestationId
 	);
 	event UserNameUpdated(address indexed userAddress, string newUserName);
+
+	constructor() {
+		owner = msg.sender;
+	}
 
 	function _registerUser(
 		address _userAddress,
@@ -71,10 +86,18 @@ contract MainRegistry {
 		emit UserRegistered(_userAddress, _userName);
 	}
 
+	function addAuthorizedAddress(address _address) external onlyOwner {
+		authorizedAddresses[_address] = true;
+	}
+
+	function removeAuthorizedAddress(address _address) external onlyOwner {
+		authorizedAddresses[_address] = false;
+	}
+
 	function addAttestation(
 		address _attestationAddress,
 		address[] memory _participants
-	) external {
+	) external onlyAuthorized {
 		_attestationIds.increment();
 		uint256 _newAttestationId = _attestationIds.current();
 		attestationAddresses[_newAttestationId] = _attestationAddress; //link attestationId <-> SmartContract Addr
@@ -123,11 +146,5 @@ contract MainRegistry {
 
 	function getUserName(address _user) external view returns (string memory) {
 		return users[_user].userName;
-	}
-
-	function getAttestationAddress(
-		uint256 _attestationId
-	) external view returns (address) {
-		return attestationAddresses[_attestationId];
 	}
 }

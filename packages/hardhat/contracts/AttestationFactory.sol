@@ -45,15 +45,17 @@ contract Attestation is ReentrancyGuard {
 	uint256 public upvoteCount;
 	mapping(address => bool) public hasUpvoted;
 
-	uint256 public totalFunds;
+	uint256 public totalReceivedFunds;
 	mapping(address => uint256) public unclaimedFunds;
 
 	event ContributorSigned(address indexed contributor);
 	event AttestationActivated();
-	event CoPublished(address indexed coPublisher);
+	event CoPublisherAdded(address indexed coPublisher);
 	event Upvoted(address indexed upvoter);
 	event FundsReceived(address indexed sender, uint256 amount);
 	event FundsClaimed(address indexed claimer, uint256 amount);
+	event AffiliationRevoked(address indexed contributor);
+	event CoPublishThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
 
 	constructor(
 		address[] memory _authors,
@@ -69,6 +71,14 @@ contract Attestation is ReentrancyGuard {
 		quotedAttestationId = _quotedAttestationId;
 		tags = _tags;
 		coPublishThreshold = _coPublishThreshold;
+		// Automatically sign the contract for the first author
+		_sign(authors[0]);
+	}
+
+	function _sign(address author) internal {
+		require(!hasSigned[author], "Author has already signed.");
+		hasSigned[author] = true;
+		emit ContributorSigned(author);
 	}
 
 	function sign() external {
@@ -87,16 +97,33 @@ contract Attestation is ReentrancyGuard {
 		emit ContributorSigned(msg.sender);
 	}
 
-	function coPublish() external payable {
-		require(msg.value >= coPublishThreshold, "Insufficient funds");
-		require(!isCoPublisher[msg.sender], "Already a co-publisher");
+	//missing amount for donation (and if the fund > threshold => co-publisher ?)
+	// Creditation as a co-publisher, no rights attached to it !!
+	function donate(uint256 amount) external payable {
+		require(
+			msg.value == amount,
+			"Sent value does not match specified amount"
+		);
+		require(amount > 0, "No funds sent");
 
-		isCoPublisher[msg.sender] = true;
-		coPublishers.push(msg.sender);
+		distributeFunds(amount);
 
-		distributeFunds(msg.value);
+		emit FundsReceived(msg.sender, amount);
 
-		emit CoPublished(msg.sender);
+		// Check if the donation amount meets the co-publishing threshold
+		if (amount >= coPublishThreshold && !isCoPublisher[msg.sender]) {
+			isCoPublisher[msg.sender] = true;
+			coPublishers.push(msg.sender);
+			emit CoPublisherAdded(msg.sender);
+		}
+	}
+
+	function setCoPublishThreshold(uint256 newThreshold) external {
+		require(isAuthor(msg.sender), "Not an Author");
+		require(newThreshold > 0, "Threshold must be greater than zero");
+		uint256 oldThreshold = coPublishThreshold;
+		coPublishThreshold = newThreshold;
+		emit CoPublishThresholdUpdated(oldThreshold, newThreshold);
 	}
 
 	function upvote() external {
@@ -105,13 +132,6 @@ contract Attestation is ReentrancyGuard {
 		upvoteCount++;
 
 		emit Upvoted(msg.sender);
-	}
-
-	function donate() external payable {
-		require(msg.value > 0, "No funds sent");
-		distributeFunds(msg.value);
-
-		emit FundsReceived(msg.sender, msg.value);
 	}
 
 	function claimFunds() external nonReentrant {
@@ -140,24 +160,63 @@ contract Attestation is ReentrancyGuard {
 			);
 		}
 
-		totalFunds = totalFunds.add(amount);
+		totalReceivedFunds = totalReceivedFunds.add(amount);
 	}
 
-	//Contributors here are author+co-authors+contributors
-	function isContributor(address _address) public view returns (bool) {
-		// Check in the first array (contributors)
-		for (uint i = 0; i < contributors.length; i++) {
-			if (contributors[i] == _address) {
-				return true;
-			}
-		}
-		// Check in the second array (authors)
+	function isAuthor(address _address) public view returns (bool) {
 		for (uint i = 0; i < authors.length; i++) {
 			if (authors[i] == _address) {
 				return true;
 			}
 		}
 		return false;
+	}
+
+	//Contributors here are author+co-authors+contributors
+	function isContributor(address _address) public view returns (bool) {
+		// Check in the contributors array
+		for (uint i = 0; i < contributors.length; i++) {
+			if (contributors[i] == _address) {
+				return true;
+			}
+		}
+
+		// Check if the address is an author
+		return isAuthor(_address);
+	}
+
+	//Any contributor can revoke his/her affiliation (only if not signed)
+	function revokeAffiliation() external {
+		require(isContributor(msg.sender), "Not a contributor or author");
+		require(!hasSigned[msg.sender], "Cannot revoke after signing");
+
+		bool found = false;
+
+		// Remove from contributors array
+		for (uint i = 0; i < contributors.length; i++) {
+			if (contributors[i] == msg.sender) {
+				contributors[i] = contributors[contributors.length - 1];
+				contributors.pop();
+				found = true;
+				break;
+			}
+		}
+
+		// If not found in contributors, check in authors array
+		if (!found) {
+			for (uint i = 0; i < authors.length; i++) {
+				if (authors[i] == msg.sender) {
+					authors[i] = authors[authors.length - 1];
+					authors.pop();
+					break;
+				}
+			}
+		}
+
+		// Clear any unclaimed funds
+		unclaimedFunds[msg.sender] = 0;
+
+		emit AffiliationRevoked(msg.sender);
 	}
 
 	// Getter functions for arrays
